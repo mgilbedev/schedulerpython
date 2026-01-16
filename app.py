@@ -5,7 +5,7 @@ in the nuclear industry using multi-agent supervision architecture.
 """
 
 import dash
-from dash import dcc, html, callback, Input, Output, State
+from dash import dcc, html, callback, Input, Output, State, clientside_callback
 import dash_bootstrap_components as dbc
 import plotly.express as px
 import plotly.graph_objects as go
@@ -132,6 +132,7 @@ workers_df = generate_workers()
 tasks_df = generate_maintenance_tasks()
 schedule_df = generate_schedule()
 
+
 # =============================================================================
 # NAVIGATION AND LAYOUT COMPONENTS
 # =============================================================================
@@ -166,6 +167,10 @@ sidebar = html.Div(
                     href="/schedule", active="exact", className="mb-2"
                 ),
                 dbc.NavLink(
+                    [html.I(className="fas fa-database me-2"), "Data Architecture"],
+                    href="/data-model", active="exact", className="mb-2"
+                ),
+                dbc.NavLink(
                     [html.I(className="fas fa-robot me-2"), "AI Agent Architecture"],
                     href="/agents", active="exact", className="mb-2"
                 ),
@@ -190,7 +195,7 @@ sidebar = html.Div(
                 html.Div(
                     [
                         html.Span("MCP Servers: ", style={"color": "#888"}),
-                        html.Span("5 Connected", style={"color": "#00d4ff"}),
+                        html.Span("8 Connected", style={"color": "#00d4ff"}),
                     ],
                     className="px-3 small mt-1"
                 ),
@@ -213,8 +218,136 @@ app.layout = html.Div([
     dcc.Location(id="url"),
     sidebar,
     content,
-    dcc.Interval(id="interval-component", interval=5000, n_intervals=0)
+    dcc.Interval(id="interval-component", interval=2000, n_intervals=0),
+    dcc.Interval(id="animation-interval", interval=500, n_intervals=0),
+    dcc.Store(id="animation-state", data={"step": 0, "active_agents": []}),
 ])
+
+# Add custom CSS via index string
+app.index_string = '''
+<!DOCTYPE html>
+<html>
+    <head>
+        {%metas%}
+        <title>{%title%}</title>
+        {%favicon%}
+        {%css%}
+        <style>
+            @keyframes pulse {
+                0% { opacity: 1; transform: scale(1); }
+                50% { opacity: 0.6; transform: scale(1.05); }
+                100% { opacity: 1; transform: scale(1); }
+            }
+
+            @keyframes flowRight {
+                0% { transform: translateX(-20px); opacity: 0; }
+                50% { opacity: 1; }
+                100% { transform: translateX(20px); opacity: 0; }
+            }
+
+            @keyframes glow {
+                0% { box-shadow: 0 0 5px rgba(0, 212, 255, 0.5); }
+                50% { box-shadow: 0 0 20px rgba(0, 212, 255, 0.8), 0 0 30px rgba(0, 212, 255, 0.4); }
+                100% { box-shadow: 0 0 5px rgba(0, 212, 255, 0.5); }
+            }
+
+            @keyframes messageFlow {
+                0% { opacity: 0; transform: scale(0.8) translateY(10px); }
+                20% { opacity: 1; transform: scale(1) translateY(0); }
+                80% { opacity: 1; transform: scale(1) translateY(0); }
+                100% { opacity: 0; transform: scale(0.8) translateY(-10px); }
+            }
+
+            @keyframes dataStream {
+                0% { background-position: 0% 50%; }
+                100% { background-position: 100% 50%; }
+            }
+
+            .data-source {
+                animation: pulse 2s ease-in-out infinite;
+            }
+
+            .data-flow-arrow {
+                animation: flowRight 1.5s ease-in-out infinite;
+            }
+
+            .agent-active {
+                animation: glow 2s ease-in-out infinite;
+                border-radius: 8px;
+            }
+
+            .message-bubble {
+                animation: messageFlow 4s ease-in-out infinite;
+            }
+
+            .message-bubble:nth-child(2) { animation-delay: 1s; }
+            .message-bubble:nth-child(3) { animation-delay: 2s; }
+            .message-bubble:nth-child(4) { animation-delay: 3s; }
+
+            .star-schema-center {
+                animation: pulse 3s ease-in-out infinite;
+            }
+
+            .dimension-table {
+                transition: all 0.3s ease;
+            }
+
+            .dimension-table:hover {
+                transform: scale(1.03);
+                box-shadow: 0 0 20px rgba(0, 212, 255, 0.5);
+            }
+
+            .mcp-server-card {
+                transition: all 0.3s ease;
+                border: 2px solid transparent;
+            }
+
+            .mcp-server-card:hover {
+                border-color: #00d4ff;
+                transform: translateY(-3px);
+            }
+
+            .agent-node {
+                transition: all 0.3s ease;
+            }
+
+            .agent-node:hover {
+                transform: scale(1.1);
+            }
+
+            .data-stream-line {
+                background: linear-gradient(90deg, transparent, #00d4ff, transparent);
+                background-size: 200% 100%;
+                animation: dataStream 2s linear infinite;
+            }
+
+            .typing-indicator {
+                display: inline-flex;
+                gap: 4px;
+            }
+
+            .typing-indicator span {
+                width: 8px;
+                height: 8px;
+                background: #00d4ff;
+                border-radius: 50%;
+                animation: pulse 1s ease-in-out infinite;
+            }
+
+            .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+            .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+        </style>
+    </head>
+    <body>
+        {%app_entry%}
+        <footer>
+            {%config%}
+            {%scripts%}
+            {%renderer%}
+        </footer>
+    </body>
+</html>
+'''
 
 # =============================================================================
 # DASHBOARD PAGE
@@ -285,13 +418,8 @@ def create_dashboard():
 
     # Equipment health overview
     equipment_health = []
-    colors = {"Reactor Coolant Pump A": "#ff6b6b", "Steam Generator B": "#ffd93d",
-              "Containment Fan Unit C": "#00ff88", "Emergency Diesel Generator 1": "#00d4ff",
-              "Main Feedwater Pump D": "#ffd93d"}
-
     for equip, data in sensors.items():
         health = 100 - (data["failure_prob"][-1] * 100)
-        color = "#ff6b6b" if health < 30 else "#ffd93d" if health < 60 else "#00ff88"
         equipment_health.append(
             dbc.Col(
                 dbc.Card([
@@ -390,9 +518,6 @@ def create_dashboard():
 def create_predictive_page():
     """Create predictive maintenance analytics page"""
 
-    # Equipment selector
-    equipment_options = [{"label": eq, "value": eq} for eq in sensors.keys()]
-
     # Create sensor trend charts
     fig_vibration = go.Figure()
     fig_temperature = go.Figure()
@@ -422,8 +547,7 @@ def create_predictive_page():
     # AVEVA Historian integration card
     aveva_card = dbc.Card([
         dbc.CardHeader([
-            html.Img(src="https://www.aveva.com/content/dam/aveva/images/logo/aveva-logo.svg",
-                    height="20", className="me-2", style={"filter": "brightness(0) invert(1)"}),
+            html.I(className="fas fa-industry me-2", style={"color": "#00d4ff"}),
             "AVEVA Historian Integration"
         ], className="bg-primary"),
         dbc.CardBody([
@@ -802,54 +926,474 @@ def create_schedule_page():
 
 
 # =============================================================================
+# DATA MODEL / ARCHITECTURE PAGE
+# =============================================================================
+
+def create_data_model_page():
+    """Create data model visualization page with animated data flows and star schema"""
+
+    # View selector
+    view_selector = dbc.ButtonGroup([
+        dbc.Button("Data Flow Animation", id="btn-data-flow", color="primary", outline=True, className="me-1"),
+        dbc.Button("Star Schema", id="btn-star-schema", color="primary", outline=True, className="me-1"),
+        dbc.Button("Source Systems", id="btn-source-systems", color="primary", outline=True),
+    ], className="mb-4")
+
+    return html.Div([
+        html.H2("Data Architecture", className="mb-4"),
+        html.P("Enterprise data integration from multiple source systems into a unified analytics model", className="text-muted mb-4"),
+
+        view_selector,
+
+        html.Div(id="data-model-content", children=[
+            create_data_flow_view()
+        ])
+    ])
+
+
+def create_data_flow_view():
+    """Create animated data flow visualization"""
+
+    # Create the animated data flow diagram
+    fig = go.Figure()
+
+    # Source systems (left side)
+    sources = [
+        {"name": "AVEVA Historian", "y": 0.85, "color": "#00d4ff", "icon": "database"},
+        {"name": "SAP ERP", "y": 0.7, "color": "#ffd93d", "icon": "building"},
+        {"name": "Salesforce CRM", "y": 0.55, "color": "#00ff88", "icon": "users"},
+        {"name": "HR System", "y": 0.4, "color": "#ff6b6b", "icon": "id-card"},
+        {"name": "Safety DB", "y": 0.25, "color": "#9b59b6", "icon": "shield-alt"},
+        {"name": "Inventory System", "y": 0.1, "color": "#e67e22", "icon": "boxes"},
+    ]
+
+    # Add source nodes
+    for src in sources:
+        fig.add_trace(go.Scatter(
+            x=[0.05], y=[src["y"]],
+            mode="markers+text",
+            marker=dict(size=40, color=src["color"], symbol="square"),
+            text=[src["name"]],
+            textposition="middle right",
+            textfont=dict(size=11, color="#fff"),
+            hoverinfo="text",
+            hovertext=src["name"]
+        ))
+
+    # Data Lake (center-left)
+    fig.add_trace(go.Scatter(
+        x=[0.35], y=[0.5],
+        mode="markers+text",
+        marker=dict(size=80, color="#1a5276", symbol="diamond"),
+        text=["Databricks<br>Lakehouse"],
+        textposition="middle center",
+        textfont=dict(size=12, color="#fff"),
+    ))
+
+    # Processing layer (center)
+    fig.add_trace(go.Scatter(
+        x=[0.55], y=[0.5],
+        mode="markers+text",
+        marker=dict(size=60, color="#00d4ff", symbol="hexagon"),
+        text=["Delta Lake<br>Processing"],
+        textposition="middle center",
+        textfont=dict(size=10, color="#fff"),
+    ))
+
+    # Star Schema (center-right)
+    fig.add_trace(go.Scatter(
+        x=[0.75], y=[0.5],
+        mode="markers+text",
+        marker=dict(size=70, color="#ffd93d", symbol="star"),
+        text=["Star<br>Schema"],
+        textposition="middle center",
+        textfont=dict(size=11, color="#000"),
+    ))
+
+    # AI/ML Layer (right)
+    fig.add_trace(go.Scatter(
+        x=[0.92], y=[0.5],
+        mode="markers+text",
+        marker=dict(size=50, color="#00ff88", symbol="circle"),
+        text=["AI/ML<br>Models"],
+        textposition="middle center",
+        textfont=dict(size=10, color="#000"),
+    ))
+
+    # Draw flow lines with animation effect
+    for src in sources:
+        # Source to Data Lake
+        fig.add_trace(go.Scatter(
+            x=[0.12, 0.28], y=[src["y"], 0.5],
+            mode="lines",
+            line=dict(color=src["color"], width=2, dash="dot"),
+            hoverinfo="none"
+        ))
+
+    # Data Lake to Processing
+    fig.add_trace(go.Scatter(
+        x=[0.42, 0.48], y=[0.5, 0.5],
+        mode="lines",
+        line=dict(color="#00d4ff", width=3),
+        hoverinfo="none"
+    ))
+
+    # Processing to Star Schema
+    fig.add_trace(go.Scatter(
+        x=[0.62, 0.68], y=[0.5, 0.5],
+        mode="lines",
+        line=dict(color="#ffd93d", width=3),
+        hoverinfo="none"
+    ))
+
+    # Star Schema to AI/ML
+    fig.add_trace(go.Scatter(
+        x=[0.82, 0.87], y=[0.5, 0.5],
+        mode="lines",
+        line=dict(color="#00ff88", width=3),
+        hoverinfo="none"
+    ))
+
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={"color": "#fff"},
+        height=500,
+        showlegend=False,
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-0.05, 1.05]),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-0.05, 1.05]),
+        title="Data Flow: Source Systems to AI/ML Models"
+    )
+
+    # Data source cards with animation indicators
+    source_cards = dbc.Row([
+        dbc.Col([
+            dbc.Card([
+                dbc.CardBody([
+                    html.Div([
+                        html.I(className="fas fa-database fa-2x me-3 data-source", style={"color": "#00d4ff"}),
+                        html.Div([
+                            html.H6("AVEVA Historian", className="mb-0"),
+                            html.Small("Real-time sensor data", className="text-muted")
+                        ])
+                    ], className="d-flex align-items-center"),
+                    html.Hr(style={"borderColor": "#444"}),
+                    html.Div([
+                        html.Span("● ", style={"color": "#00ff88"}),
+                        html.Span("Streaming: ", className="text-muted"),
+                        html.Span("12,847 pts/sec", className="text-info")
+                    ], className="small"),
+                    html.Div(id="historian-flow-indicator", className="mt-2", children=[
+                        html.Div([
+                            html.I(className="fas fa-arrow-right data-flow-arrow me-1", style={"color": "#00d4ff"}),
+                            html.Span("Vibration, Temperature, Pressure", className="small text-muted")
+                        ])
+                    ])
+                ])
+            ], className="bg-dark mcp-server-card h-100")
+        ], width=4),
+        dbc.Col([
+            dbc.Card([
+                dbc.CardBody([
+                    html.Div([
+                        html.I(className="fas fa-building fa-2x me-3 data-source", style={"color": "#ffd93d"}),
+                        html.Div([
+                            html.H6("SAP ERP", className="mb-0"),
+                            html.Small("Work orders & inventory", className="text-muted")
+                        ])
+                    ], className="d-flex align-items-center"),
+                    html.Hr(style={"borderColor": "#444"}),
+                    html.Div([
+                        html.Span("● ", style={"color": "#00ff88"}),
+                        html.Span("Batch: ", className="text-muted"),
+                        html.Span("Every 15 min", className="text-info")
+                    ], className="small"),
+                    html.Div(className="mt-2", children=[
+                        html.Div([
+                            html.I(className="fas fa-arrow-right data-flow-arrow me-1", style={"color": "#ffd93d"}),
+                            html.Span("Parts, Costs, Procurement", className="small text-muted")
+                        ])
+                    ])
+                ])
+            ], className="bg-dark mcp-server-card h-100")
+        ], width=4),
+        dbc.Col([
+            dbc.Card([
+                dbc.CardBody([
+                    html.Div([
+                        html.I(className="fas fa-users fa-2x me-3 data-source", style={"color": "#00ff88"}),
+                        html.Div([
+                            html.H6("Salesforce CRM", className="mb-0"),
+                            html.Small("Customer & contract data", className="text-muted")
+                        ])
+                    ], className="d-flex align-items-center"),
+                    html.Hr(style={"borderColor": "#444"}),
+                    html.Div([
+                        html.Span("● ", style={"color": "#00ff88"}),
+                        html.Span("CDC: ", className="text-muted"),
+                        html.Span("Real-time sync", className="text-info")
+                    ], className="small"),
+                    html.Div(className="mt-2", children=[
+                        html.Div([
+                            html.I(className="fas fa-arrow-right data-flow-arrow me-1", style={"color": "#00ff88"}),
+                            html.Span("SLAs, Contracts, Contacts", className="small text-muted")
+                        ])
+                    ])
+                ])
+            ], className="bg-dark mcp-server-card h-100")
+        ], width=4),
+    ], className="mb-4")
+
+    return html.Div([
+        dbc.Card([
+            dbc.CardBody([
+                dcc.Graph(figure=fig, config={"displayModeBar": False})
+            ])
+        ], className="bg-dark mb-4"),
+
+        html.H5("Source System Connections", className="mb-3"),
+        source_cards,
+
+        # Data pipeline stats
+        dbc.Card([
+            dbc.CardHeader([
+                html.I(className="fas fa-chart-bar me-2"),
+                "Real-Time Data Pipeline Statistics"
+            ]),
+            dbc.CardBody([
+                dbc.Row([
+                    dbc.Col([
+                        html.Div([
+                            html.H3("2.4M", className="mb-0", style={"color": "#00d4ff"}),
+                            html.Small("Records/Hour", className="text-muted")
+                        ], className="text-center")
+                    ], width=3),
+                    dbc.Col([
+                        html.Div([
+                            html.H3("99.7%", className="mb-0", style={"color": "#00ff88"}),
+                            html.Small("Data Quality", className="text-muted")
+                        ], className="text-center")
+                    ], width=3),
+                    dbc.Col([
+                        html.Div([
+                            html.H3("<500ms", className="mb-0", style={"color": "#ffd93d"}),
+                            html.Small("Latency", className="text-muted")
+                        ], className="text-center")
+                    ], width=3),
+                    dbc.Col([
+                        html.Div([
+                            html.H3("6", className="mb-0", style={"color": "#ff6b6b"}),
+                            html.Small("Source Systems", className="text-muted")
+                        ], className="text-center")
+                    ], width=3),
+                ])
+            ])
+        ], className="bg-dark")
+    ])
+
+
+def create_star_schema_view():
+    """Create star schema visualization"""
+
+    # Create star schema diagram
+    fig = go.Figure()
+
+    # Fact table (center)
+    fig.add_trace(go.Scatter(
+        x=[0.5], y=[0.5],
+        mode="markers+text",
+        marker=dict(size=100, color="#ff6b6b", symbol="square"),
+        text=["FACT:<br>Maintenance<br>Events"],
+        textposition="middle center",
+        textfont=dict(size=12, color="#fff"),
+    ))
+
+    # Dimension tables (around the fact)
+    dimensions = [
+        {"name": "DIM:\nEquipment", "x": 0.5, "y": 0.9, "color": "#00d4ff"},
+        {"name": "DIM:\nWorker", "x": 0.85, "y": 0.7, "color": "#00ff88"},
+        {"name": "DIM:\nTime", "x": 0.85, "y": 0.3, "color": "#ffd93d"},
+        {"name": "DIM:\nLocation", "x": 0.5, "y": 0.1, "color": "#9b59b6"},
+        {"name": "DIM:\nParts", "x": 0.15, "y": 0.3, "color": "#e67e22"},
+        {"name": "DIM:\nSafety", "x": 0.15, "y": 0.7, "color": "#1abc9c"},
+    ]
+
+    for dim in dimensions:
+        # Draw connection line
+        fig.add_trace(go.Scatter(
+            x=[0.5, dim["x"]], y=[0.5, dim["y"]],
+            mode="lines",
+            line=dict(color="#444", width=3),
+            hoverinfo="none"
+        ))
+        # Draw dimension node
+        fig.add_trace(go.Scatter(
+            x=[dim["x"]], y=[dim["y"]],
+            mode="markers+text",
+            marker=dict(size=70, color=dim["color"], symbol="square"),
+            text=[dim["name"]],
+            textposition="middle center",
+            textfont=dict(size=10, color="#fff"),
+        ))
+
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={"color": "#fff"},
+        height=600,
+        showlegend=False,
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-0.1, 1.1]),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-0.1, 1.1]),
+        title="Star Schema: Maintenance Analytics Data Model"
+    )
+
+    # Dimension details
+    dim_details = dbc.Row([
+        dbc.Col([
+            dbc.Card([
+                dbc.CardHeader("FACT: Maintenance Events", style={"backgroundColor": "#ff6b6b"}),
+                dbc.CardBody([
+                    html.H6("Measures:", className="text-info"),
+                    html.Ul([
+                        html.Li("event_id (PK)", className="small"),
+                        html.Li("duration_hours", className="small"),
+                        html.Li("labor_cost", className="small"),
+                        html.Li("parts_cost", className="small"),
+                        html.Li("downtime_minutes", className="small"),
+                        html.Li("failure_prevented (bool)", className="small"),
+                    ]),
+                    html.H6("Foreign Keys:", className="text-info mt-3"),
+                    html.Ul([
+                        html.Li("equipment_key", className="small"),
+                        html.Li("worker_key", className="small"),
+                        html.Li("time_key", className="small"),
+                        html.Li("location_key", className="small"),
+                        html.Li("parts_key", className="small"),
+                        html.Li("safety_key", className="small"),
+                    ])
+                ])
+            ], className="bg-dark dimension-table h-100")
+        ], width=4),
+        dbc.Col([
+            dbc.Card([
+                dbc.CardHeader("DIM: Equipment", style={"backgroundColor": "#00d4ff", "color": "#000"}),
+                dbc.CardBody([
+                    html.Ul([
+                        html.Li("equipment_key (PK)", className="small"),
+                        html.Li("equipment_id", className="small"),
+                        html.Li("equipment_name", className="small"),
+                        html.Li("equipment_type", className="small"),
+                        html.Li("manufacturer", className="small"),
+                        html.Li("install_date", className="small"),
+                        html.Li("criticality_rating", className="small"),
+                        html.Li("last_maintenance_date", className="small"),
+                    ])
+                ])
+            ], className="bg-dark dimension-table mb-3"),
+            dbc.Card([
+                dbc.CardHeader("DIM: Worker", style={"backgroundColor": "#00ff88", "color": "#000"}),
+                dbc.CardBody([
+                    html.Ul([
+                        html.Li("worker_key (PK)", className="small"),
+                        html.Li("worker_id", className="small"),
+                        html.Li("name", className="small"),
+                        html.Li("certification_level", className="small"),
+                        html.Li("skills (array)", className="small"),
+                        html.Li("shift", className="small"),
+                        html.Li("department", className="small"),
+                    ])
+                ])
+            ], className="bg-dark dimension-table")
+        ], width=4),
+        dbc.Col([
+            dbc.Card([
+                dbc.CardHeader("DIM: Time", style={"backgroundColor": "#ffd93d", "color": "#000"}),
+                dbc.CardBody([
+                    html.Ul([
+                        html.Li("time_key (PK)", className="small"),
+                        html.Li("date", className="small"),
+                        html.Li("hour", className="small"),
+                        html.Li("day_of_week", className="small"),
+                        html.Li("month", className="small"),
+                        html.Li("quarter", className="small"),
+                        html.Li("year", className="small"),
+                        html.Li("is_outage_window", className="small"),
+                    ])
+                ])
+            ], className="bg-dark dimension-table mb-3"),
+            dbc.Card([
+                dbc.CardHeader("DIM: Parts", style={"backgroundColor": "#e67e22"}),
+                dbc.CardBody([
+                    html.Ul([
+                        html.Li("parts_key (PK)", className="small"),
+                        html.Li("part_number", className="small"),
+                        html.Li("description", className="small"),
+                        html.Li("supplier", className="small"),
+                        html.Li("unit_cost", className="small"),
+                        html.Li("lead_time_days", className="small"),
+                    ])
+                ])
+            ], className="bg-dark dimension-table")
+        ], width=4),
+    ])
+
+    return html.Div([
+        dbc.Card([
+            dbc.CardBody([
+                dcc.Graph(figure=fig, config={"displayModeBar": False})
+            ])
+        ], className="bg-dark mb-4"),
+
+        html.H5("Schema Details", className="mb-3"),
+        dim_details
+    ])
+
+
+# =============================================================================
 # AI AGENT ARCHITECTURE PAGE
 # =============================================================================
 
 def create_agents_page():
-    """Create AI agent architecture visualization page"""
+    """Create AI agent architecture visualization page with animation"""
+
+    # View selector for different agent views
+    view_selector = dbc.ButtonGroup([
+        dbc.Button("Agent Overview", id="btn-agent-overview", color="primary", outline=True, className="me-1"),
+        dbc.Button("MCP Servers", id="btn-mcp-servers", color="primary", outline=True, className="me-1"),
+        dbc.Button("Agent Communication", id="btn-agent-comm", color="primary", outline=True),
+    ], className="mb-4")
+
+    return html.Div([
+        html.H2("AI Agent Architecture", className="mb-4"),
+        html.P("Multi-agent supervision system with MCP server integration for intelligent scheduling", className="text-muted mb-4"),
+
+        view_selector,
+
+        html.Div(id="agent-view-content", children=[
+            create_agent_overview()
+        ])
+    ])
+
+
+def create_agent_overview():
+    """Create the agent overview with animated architecture"""
 
     # Multi-agent architecture diagram using Plotly
     fig_architecture = go.Figure()
 
     # Define node positions for architecture diagram
     nodes = {
-        # Supervisor Agent (top center)
-        "supervisor": {"x": 0.5, "y": 0.95, "label": "Supervisor Agent", "color": "#ff6b6b", "size": 50},
-
-        # Sub-agents (second row)
-        "predictive": {"x": 0.15, "y": 0.7, "label": "Predictive\nMaintenance Agent", "color": "#00d4ff", "size": 40},
-        "scheduling": {"x": 0.4, "y": 0.7, "label": "Scheduling\nOptimization Agent", "color": "#00d4ff", "size": 40},
-        "resource": {"x": 0.6, "y": 0.7, "label": "Resource\nAllocation Agent", "color": "#00d4ff", "size": 40},
-        "safety": {"x": 0.85, "y": 0.7, "label": "Safety &\nCompliance Agent", "color": "#00d4ff", "size": 40},
-
-        # MCP Servers (third row)
-        "mcp_aveva": {"x": 0.1, "y": 0.4, "label": "AVEVA Historian\nMCP Server", "color": "#ffd93d", "size": 35},
-        "mcp_cmms": {"x": 0.3, "y": 0.4, "label": "CMMS\nMCP Server", "color": "#ffd93d", "size": 35},
-        "mcp_hr": {"x": 0.5, "y": 0.4, "label": "HR/Workforce\nMCP Server", "color": "#ffd93d", "size": 35},
-        "mcp_safety": {"x": 0.7, "y": 0.4, "label": "Safety Systems\nMCP Server", "color": "#ffd93d", "size": 35},
-        "mcp_inventory": {"x": 0.9, "y": 0.4, "label": "Parts Inventory\nMCP Server", "color": "#ffd93d", "size": 35},
-
-        # Data Sources (bottom row)
-        "historian": {"x": 0.1, "y": 0.15, "label": "AVEVA\nHistorian DB", "color": "#00ff88", "size": 30},
-        "cmms_db": {"x": 0.3, "y": 0.15, "label": "CMMS\nDatabase", "color": "#00ff88", "size": 30},
-        "hr_db": {"x": 0.5, "y": 0.15, "label": "HR\nDatabase", "color": "#00ff88", "size": 30},
-        "safety_db": {"x": 0.7, "y": 0.15, "label": "Safety\nRecords", "color": "#00ff88", "size": 30},
-        "inventory_db": {"x": 0.9, "y": 0.15, "label": "Inventory\nSystem", "color": "#00ff88", "size": 30},
+        "supervisor": {"x": 0.5, "y": 0.92, "label": "Supervisor Agent", "color": "#ff6b6b", "size": 55},
+        "predictive": {"x": 0.15, "y": 0.68, "label": "Predictive\nMaintenance", "color": "#00d4ff", "size": 45},
+        "scheduling": {"x": 0.38, "y": 0.68, "label": "Scheduling\nOptimization", "color": "#00d4ff", "size": 45},
+        "resource": {"x": 0.62, "y": 0.68, "label": "Resource\nAllocation", "color": "#00d4ff", "size": 45},
+        "safety": {"x": 0.85, "y": 0.68, "label": "Safety &\nCompliance", "color": "#00d4ff", "size": 45},
     }
 
     # Define connections
     connections = [
-        # Supervisor to sub-agents
         ("supervisor", "predictive"), ("supervisor", "scheduling"),
         ("supervisor", "resource"), ("supervisor", "safety"),
-        # Sub-agents to MCP servers
-        ("predictive", "mcp_aveva"), ("predictive", "mcp_cmms"),
-        ("scheduling", "mcp_cmms"), ("scheduling", "mcp_hr"),
-        ("resource", "mcp_hr"), ("resource", "mcp_inventory"),
-        ("safety", "mcp_safety"), ("safety", "mcp_cmms"),
-        # MCP servers to databases
-        ("mcp_aveva", "historian"), ("mcp_cmms", "cmms_db"),
-        ("mcp_hr", "hr_db"), ("mcp_safety", "safety_db"), ("mcp_inventory", "inventory_db"),
     ]
 
     # Draw connections
@@ -858,44 +1402,31 @@ def create_agents_page():
             x=[nodes[start]["x"], nodes[end]["x"]],
             y=[nodes[start]["y"], nodes[end]["y"]],
             mode="lines",
-            line=dict(color="#444", width=2),
+            line=dict(color="#444", width=3),
             hoverinfo="none"
         ))
 
     # Draw nodes
     for node_id, node in nodes.items():
         fig_architecture.add_trace(go.Scatter(
-            x=[node["x"]],
-            y=[node["y"]],
+            x=[node["x"]], y=[node["y"]],
             mode="markers+text",
             marker=dict(size=node["size"], color=node["color"], line=dict(color="#fff", width=2)),
             text=[node["label"]],
             textposition="bottom center",
-            textfont=dict(size=10, color="#fff"),
-            hoverinfo="text",
-            hovertext=node["label"].replace("\n", " ")
+            textfont=dict(size=11, color="#fff"),
         ))
 
     fig_architecture.update_layout(
-        title="Multi-Agent Supervision Architecture",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
         font={"color": "#fff"},
-        height=600,
+        height=350,
         showlegend=False,
         xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-0.05, 1.05]),
-        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[0, 1.1])
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[0.4, 1.05]),
+        margin=dict(l=20, r=20, t=20, b=20)
     )
-
-    # Add layer labels
-    fig_architecture.add_annotation(x=-0.02, y=0.95, text="Orchestration", showarrow=False,
-                                   font=dict(color="#888", size=10), textangle=-90)
-    fig_architecture.add_annotation(x=-0.02, y=0.7, text="AI Agents", showarrow=False,
-                                   font=dict(color="#888", size=10), textangle=-90)
-    fig_architecture.add_annotation(x=-0.02, y=0.4, text="MCP Layer", showarrow=False,
-                                   font=dict(color="#888", size=10), textangle=-90)
-    fig_architecture.add_annotation(x=-0.02, y=0.15, text="Data Sources", showarrow=False,
-                                   font=dict(color="#888", size=10), textangle=-90)
 
     # Agent cards with detailed descriptions
     agent_cards = dbc.Row([
@@ -916,13 +1447,13 @@ def create_agents_page():
                         html.Li("Human-in-the-loop approval workflow", className="small"),
                     ], className="mb-0")
                 ])
-            ], className="bg-dark h-100")
+            ], className="bg-dark h-100 agent-active")
         ], width=3),
         dbc.Col([
             dbc.Card([
                 dbc.CardHeader([
                     html.I(className="fas fa-chart-line me-2", style={"color": "#00d4ff"}),
-                    "Predictive Maintenance Agent"
+                    "Predictive Maintenance"
                 ], className="bg-dark"),
                 dbc.CardBody([
                     html.P("Analyzes sensor data to predict equipment failures", className="small"),
@@ -931,8 +1462,8 @@ def create_agents_page():
                     html.Ul([
                         html.Li("Time-series anomaly detection", className="small"),
                         html.Li("Failure probability estimation", className="small"),
-                        html.Li("Remaining useful life (RUL) prediction", className="small"),
-                        html.Li("Maintenance recommendation generation", className="small"),
+                        html.Li("RUL prediction", className="small"),
+                        html.Li("Maintenance recommendations", className="small"),
                     ], className="mb-0")
                 ])
             ], className="bg-dark h-100")
@@ -941,16 +1472,16 @@ def create_agents_page():
             dbc.Card([
                 dbc.CardHeader([
                     html.I(className="fas fa-calendar-check me-2", style={"color": "#00d4ff"}),
-                    "Scheduling Optimization Agent"
+                    "Scheduling Optimization"
                 ], className="bg-dark"),
                 dbc.CardBody([
-                    html.P("Creates optimal maintenance schedules using constraint optimization", className="small"),
+                    html.P("Creates optimal maintenance schedules", className="small"),
                     html.Hr(style={"borderColor": "#444"}),
                     html.Strong("Optimization Factors:", className="small"),
                     html.Ul([
                         html.Li("Equipment criticality ranking", className="small"),
                         html.Li("Worker skill matching", className="small"),
-                        html.Li("Regulatory compliance windows", className="small"),
+                        html.Li("Regulatory compliance", className="small"),
                         html.Li("Parts availability", className="small"),
                     ], className="mb-0")
                 ])
@@ -960,10 +1491,10 @@ def create_agents_page():
             dbc.Card([
                 dbc.CardHeader([
                     html.I(className="fas fa-shield-alt me-2", style={"color": "#00d4ff"}),
-                    "Safety & Compliance Agent"
+                    "Safety & Compliance"
                 ], className="bg-dark"),
                 dbc.CardBody([
-                    html.P("Ensures all schedules meet nuclear safety regulations", className="small"),
+                    html.P("Ensures nuclear safety regulations are met", className="small"),
                     html.Hr(style={"borderColor": "#444"}),
                     html.Strong("Compliance Checks:", className="small"),
                     html.Ul([
@@ -977,159 +1508,7 @@ def create_agents_page():
         ], width=3),
     ], className="mb-4")
 
-    # MCP Server integration details
-    mcp_details = dbc.Card([
-        dbc.CardHeader([
-            html.I(className="fas fa-server me-2", style={"color": "#ffd93d"}),
-            "MCP (Model Context Protocol) Server Integration"
-        ]),
-        dbc.CardBody([
-            dbc.Row([
-                dbc.Col([
-                    html.H6("What is MCP?", className="text-info"),
-                    html.P([
-                        "The Model Context Protocol enables AI agents to securely connect to external data sources ",
-                        "and tools. Each MCP server acts as a bridge between the AI agents and enterprise systems."
-                    ], className="small"),
-                ], width=6),
-                dbc.Col([
-                    html.H6("Benefits", className="text-info"),
-                    html.Ul([
-                        html.Li("Standardized data access for AI agents", className="small"),
-                        html.Li("Secure authentication and authorization", className="small"),
-                        html.Li("Real-time data retrieval", className="small"),
-                        html.Li("Audit logging for compliance", className="small"),
-                    ])
-                ], width=6),
-            ]),
-            html.Hr(style={"borderColor": "#444"}),
-            dbc.Row([
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardBody([
-                            html.Div([
-                                html.I(className="fas fa-database me-2", style={"color": "#ffd93d"}),
-                                html.Strong("AVEVA Historian MCP")
-                            ]),
-                            html.Small("Sensor data, trends, historical values", className="text-muted d-block mt-1"),
-                            dbc.Badge("12,847 points/sec", color="info", className="mt-2")
-                        ])
-                    ], className="bg-secondary")
-                ], width=True),
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardBody([
-                            html.Div([
-                                html.I(className="fas fa-wrench me-2", style={"color": "#ffd93d"}),
-                                html.Strong("CMMS MCP")
-                            ]),
-                            html.Small("Work orders, equipment history, procedures", className="text-muted d-block mt-1"),
-                            dbc.Badge("2,456 work orders", color="info", className="mt-2")
-                        ])
-                    ], className="bg-secondary")
-                ], width=True),
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardBody([
-                            html.Div([
-                                html.I(className="fas fa-users me-2", style={"color": "#ffd93d"}),
-                                html.Strong("HR/Workforce MCP")
-                            ]),
-                            html.Small("Skills, certifications, schedules", className="text-muted d-block mt-1"),
-                            dbc.Badge("156 workers", color="info", className="mt-2")
-                        ])
-                    ], className="bg-secondary")
-                ], width=True),
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardBody([
-                            html.Div([
-                                html.I(className="fas fa-radiation me-2", style={"color": "#ffd93d"}),
-                                html.Strong("Safety Systems MCP")
-                            ]),
-                            html.Small("Permits, dose tracking, procedures", className="text-muted d-block mt-1"),
-                            dbc.Badge("100% compliance", color="success", className="mt-2")
-                        ])
-                    ], className="bg-secondary")
-                ], width=True),
-                dbc.Col([
-                    dbc.Card([
-                        dbc.CardBody([
-                            html.Div([
-                                html.I(className="fas fa-boxes me-2", style={"color": "#ffd93d"}),
-                                html.Strong("Inventory MCP")
-                            ]),
-                            html.Small("Parts, availability, lead times", className="text-muted d-block mt-1"),
-                            dbc.Badge("8,234 SKUs", color="info", className="mt-2")
-                        ])
-                    ], className="bg-secondary")
-                ], width=True),
-            ])
-        ])
-    ], className="bg-dark mb-4")
-
-    # Decision flow diagram
-    decision_flow = dbc.Card([
-        dbc.CardHeader([
-            html.I(className="fas fa-project-diagram me-2"),
-            "Agent Decision Flow"
-        ]),
-        dbc.CardBody([
-            html.Div([
-                # Step 1
-                html.Div([
-                    dbc.Badge("1", color="primary", className="me-2"),
-                    html.Strong("Data Collection"),
-                    html.P("AVEVA Historian streams sensor data to Predictive Maintenance Agent", className="small text-muted mb-0")
-                ], className="mb-3"),
-                html.I(className="fas fa-arrow-down d-block text-center mb-3", style={"color": "#444"}),
-
-                # Step 2
-                html.Div([
-                    dbc.Badge("2", color="primary", className="me-2"),
-                    html.Strong("Failure Prediction"),
-                    html.P("ML model analyzes patterns and generates failure probability scores", className="small text-muted mb-0")
-                ], className="mb-3"),
-                html.I(className="fas fa-arrow-down d-block text-center mb-3", style={"color": "#444"}),
-
-                # Step 3
-                html.Div([
-                    dbc.Badge("3", color="primary", className="me-2"),
-                    html.Strong("Task Generation"),
-                    html.P("Maintenance tasks created with priority based on failure risk", className="small text-muted mb-0")
-                ], className="mb-3"),
-                html.I(className="fas fa-arrow-down d-block text-center mb-3", style={"color": "#444"}),
-
-                # Step 4
-                html.Div([
-                    dbc.Badge("4", color="primary", className="me-2"),
-                    html.Strong("Resource Matching"),
-                    html.P("Resource Agent matches worker skills and availability", className="small text-muted mb-0")
-                ], className="mb-3"),
-                html.I(className="fas fa-arrow-down d-block text-center mb-3", style={"color": "#444"}),
-
-                # Step 5
-                html.Div([
-                    dbc.Badge("5", color="primary", className="me-2"),
-                    html.Strong("Safety Validation"),
-                    html.P("Safety Agent verifies compliance with NRC regulations", className="small text-muted mb-0")
-                ], className="mb-3"),
-                html.I(className="fas fa-arrow-down d-block text-center mb-3", style={"color": "#444"}),
-
-                # Step 6
-                html.Div([
-                    dbc.Badge("6", color="success", className="me-2"),
-                    html.Strong("Schedule Optimization"),
-                    html.P("Supervisor Agent approves and publishes optimized schedule", className="small text-muted mb-0")
-                ]),
-            ])
-        ])
-    ], className="bg-dark")
-
     return html.Div([
-        html.H2("AI Agent Architecture", className="mb-4"),
-        html.P("Multi-agent supervision system with MCP server integration for intelligent scheduling", className="text-muted mb-4"),
-
         dbc.Card([
             dbc.CardBody([
                 dcc.Graph(figure=fig_architecture, config={"displayModeBar": False})
@@ -1137,14 +1516,440 @@ def create_agents_page():
         ], className="bg-dark mb-4"),
 
         html.H5("Agent Responsibilities", className="mb-3"),
-        agent_cards,
-
-        mcp_details,
-
-        dbc.Row([
-            dbc.Col([decision_flow], width=12)
-        ])
+        agent_cards
     ])
+
+
+def create_mcp_servers_view():
+    """Create MCP server integration view with Databricks components"""
+
+    # MCP Server diagram
+    fig = go.Figure()
+
+    # Central Agent Hub
+    fig.add_trace(go.Scatter(
+        x=[0.5], y=[0.85],
+        mode="markers+text",
+        marker=dict(size=70, color="#ff6b6b"),
+        text=["AI Agent<br>Hub"],
+        textposition="middle center",
+        textfont=dict(size=12, color="#fff"),
+    ))
+
+    # MCP Servers
+    mcp_servers = [
+        {"name": "Databricks\nGenie Spaces", "x": 0.1, "y": 0.5, "color": "#FF3621"},
+        {"name": "Databricks\nVector MCP", "x": 0.3, "y": 0.5, "color": "#FF3621"},
+        {"name": "AVEVA\nHistorian MCP", "x": 0.5, "y": 0.5, "color": "#00d4ff"},
+        {"name": "Unity Catalog\nMCP", "x": 0.7, "y": 0.5, "color": "#FF3621"},
+        {"name": "External\nAPI MCP", "x": 0.9, "y": 0.5, "color": "#00ff88"},
+    ]
+
+    for mcp in mcp_servers:
+        # Connection line
+        fig.add_trace(go.Scatter(
+            x=[0.5, mcp["x"]], y=[0.78, 0.58],
+            mode="lines",
+            line=dict(color="#444", width=2, dash="dot"),
+            hoverinfo="none"
+        ))
+        # MCP node
+        fig.add_trace(go.Scatter(
+            x=[mcp["x"]], y=[mcp["y"]],
+            mode="markers+text",
+            marker=dict(size=50, color=mcp["color"], symbol="square"),
+            text=[mcp["name"]],
+            textposition="bottom center",
+            textfont=dict(size=10, color="#fff"),
+        ))
+
+    # External services
+    external = [
+        {"name": "OpenAI", "x": 0.2, "y": 0.15, "color": "#10a37f"},
+        {"name": "Weather API", "x": 0.4, "y": 0.15, "color": "#ffd93d"},
+        {"name": "NRC Database", "x": 0.6, "y": 0.15, "color": "#9b59b6"},
+        {"name": "Parts Supplier", "x": 0.8, "y": 0.15, "color": "#e67e22"},
+    ]
+
+    for ext in external:
+        fig.add_trace(go.Scatter(
+            x=[ext["x"]], y=[ext["y"]],
+            mode="markers+text",
+            marker=dict(size=35, color=ext["color"], symbol="circle"),
+            text=[ext["name"]],
+            textposition="bottom center",
+            textfont=dict(size=9, color="#fff"),
+        ))
+        # Connection to External API MCP
+        fig.add_trace(go.Scatter(
+            x=[0.9, ext["x"]], y=[0.42, 0.22],
+            mode="lines",
+            line=dict(color="#444", width=1),
+            hoverinfo="none"
+        ))
+
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={"color": "#fff"},
+        height=500,
+        showlegend=False,
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-0.05, 1.05]),
+        yaxis=dict(showgrid=False, zeroline=False, showticklabels=False, range=[-0.05, 1.05]),
+        title="MCP Server Integration Architecture"
+    )
+
+    # MCP Server detail cards
+    mcp_cards = dbc.Row([
+        dbc.Col([
+            dbc.Card([
+                dbc.CardHeader([
+                    html.Img(src="https://www.databricks.com/wp-content/uploads/2022/06/db-nav-logo.svg",
+                            height="20", className="me-2", style={"filter": "brightness(0) invert(1)"}),
+                    "Genie Spaces MCP"
+                ], style={"backgroundColor": "#FF3621"}),
+                dbc.CardBody([
+                    html.P("Natural language interface for data exploration", className="small"),
+                    html.Hr(style={"borderColor": "#444"}),
+                    html.Strong("Capabilities:", className="small text-info"),
+                    html.Ul([
+                        html.Li("Text-to-SQL generation", className="small"),
+                        html.Li("Data discovery", className="small"),
+                        html.Li("Semantic search", className="small"),
+                        html.Li("Auto-visualization", className="small"),
+                    ], className="mb-0"),
+                    html.Div([
+                        dbc.Badge("Active", color="success", className="me-1"),
+                        dbc.Badge("15 queries/min", color="info"),
+                    ], className="mt-2")
+                ])
+            ], className="bg-dark mcp-server-card h-100")
+        ], width=4),
+        dbc.Col([
+            dbc.Card([
+                dbc.CardHeader([
+                    html.I(className="fas fa-vector-square me-2"),
+                    "Vector MCP Server"
+                ], style={"backgroundColor": "#FF3621"}),
+                dbc.CardBody([
+                    html.P("Semantic search and RAG capabilities", className="small"),
+                    html.Hr(style={"borderColor": "#444"}),
+                    html.Strong("Features:", className="small text-info"),
+                    html.Ul([
+                        html.Li("Document embeddings", className="small"),
+                        html.Li("Similarity search", className="small"),
+                        html.Li("Knowledge retrieval", className="small"),
+                        html.Li("Context augmentation", className="small"),
+                    ], className="mb-0"),
+                    html.Div([
+                        dbc.Badge("Active", color="success", className="me-1"),
+                        dbc.Badge("1.2M vectors", color="info"),
+                    ], className="mt-2")
+                ])
+            ], className="bg-dark mcp-server-card h-100")
+        ], width=4),
+        dbc.Col([
+            dbc.Card([
+                dbc.CardHeader([
+                    html.I(className="fas fa-globe me-2"),
+                    "External API Gateway"
+                ], style={"backgroundColor": "#00ff88", "color": "#000"}),
+                dbc.CardBody([
+                    html.P("Secure access to external services", className="small"),
+                    html.Hr(style={"borderColor": "#444"}),
+                    html.Strong("Connected Services:", className="small text-info"),
+                    html.Ul([
+                        html.Li("OpenAI GPT-4", className="small"),
+                        html.Li("Weather Service", className="small"),
+                        html.Li("NRC Compliance DB", className="small"),
+                        html.Li("Parts Suppliers API", className="small"),
+                    ], className="mb-0"),
+                    html.Div([
+                        dbc.Badge("Active", color="success", className="me-1"),
+                        dbc.Badge("4 endpoints", color="info"),
+                    ], className="mt-2")
+                ])
+            ], className="bg-dark mcp-server-card h-100")
+        ], width=4),
+    ], className="mb-4")
+
+    # Additional MCP details
+    mcp_row2 = dbc.Row([
+        dbc.Col([
+            dbc.Card([
+                dbc.CardHeader([
+                    html.I(className="fas fa-database me-2", style={"color": "#00d4ff"}),
+                    "AVEVA Historian MCP"
+                ]),
+                dbc.CardBody([
+                    html.Div([
+                        html.Span("● ", style={"color": "#00ff88"}),
+                        html.Span("Status: ", className="text-muted"),
+                        html.Span("Connected", style={"color": "#00ff88"})
+                    ], className="small mb-1"),
+                    html.Div([
+                        html.Span("● ", style={"color": "#00ff88"}),
+                        html.Span("Data Rate: ", className="text-muted"),
+                        html.Span("12,847 pts/sec", className="text-info")
+                    ], className="small mb-1"),
+                    html.Div([
+                        html.Span("● ", style={"color": "#00ff88"}),
+                        html.Span("Tags: ", className="text-muted"),
+                        html.Span("2,456 monitored", className="text-info")
+                    ], className="small"),
+                ])
+            ], className="bg-dark")
+        ], width=6),
+        dbc.Col([
+            dbc.Card([
+                dbc.CardHeader([
+                    html.I(className="fas fa-layer-group me-2", style={"color": "#FF3621"}),
+                    "Unity Catalog MCP"
+                ]),
+                dbc.CardBody([
+                    html.Div([
+                        html.Span("● ", style={"color": "#00ff88"}),
+                        html.Span("Status: ", className="text-muted"),
+                        html.Span("Connected", style={"color": "#00ff88"})
+                    ], className="small mb-1"),
+                    html.Div([
+                        html.Span("● ", style={"color": "#00ff88"}),
+                        html.Span("Tables: ", className="text-muted"),
+                        html.Span("847 registered", className="text-info")
+                    ], className="small mb-1"),
+                    html.Div([
+                        html.Span("● ", style={"color": "#00ff88"}),
+                        html.Span("Policies: ", className="text-muted"),
+                        html.Span("156 active", className="text-info")
+                    ], className="small"),
+                ])
+            ], className="bg-dark")
+        ], width=6),
+    ])
+
+    return html.Div([
+        dbc.Card([
+            dbc.CardBody([
+                dcc.Graph(figure=fig, config={"displayModeBar": False})
+            ])
+        ], className="bg-dark mb-4"),
+
+        html.H5("MCP Server Details", className="mb-3"),
+        mcp_cards,
+        mcp_row2
+    ])
+
+
+def create_agent_communication_view():
+    """Create animated agent communication visualization"""
+
+    # This will be updated by callback for animation
+    return html.Div([
+        dbc.Card([
+            dbc.CardHeader([
+                html.I(className="fas fa-comments me-2"),
+                "Live Agent Communication"
+            ]),
+            dbc.CardBody([
+                html.Div(id="agent-comm-diagram", children=[
+                    create_comm_diagram_static()
+                ])
+            ])
+        ], className="bg-dark mb-4"),
+
+        # Message log
+        dbc.Card([
+            dbc.CardHeader([
+                html.I(className="fas fa-stream me-2"),
+                "Agent Message Stream"
+            ]),
+            dbc.CardBody([
+                html.Div(id="agent-message-log", style={"maxHeight": "400px", "overflowY": "auto"}, children=[
+                    create_message_log()
+                ])
+            ])
+        ], className="bg-dark")
+    ])
+
+
+def create_comm_diagram_static():
+    """Create static communication diagram with CSS animations"""
+
+    # Agent communication flow
+    agents = [
+        {"id": "supervisor", "name": "Supervisor", "x": 50, "y": 10, "color": "#ff6b6b"},
+        {"id": "predictive", "name": "Predictive", "x": 15, "y": 50, "color": "#00d4ff"},
+        {"id": "scheduling", "name": "Scheduling", "x": 40, "y": 50, "color": "#00d4ff"},
+        {"id": "resource", "name": "Resource", "x": 60, "y": 50, "color": "#00d4ff"},
+        {"id": "safety", "name": "Safety", "x": 85, "y": 50, "color": "#00d4ff"},
+    ]
+
+    # MCP servers at bottom
+    mcps = [
+        {"id": "genie", "name": "Genie Spaces", "x": 20, "y": 85, "color": "#FF3621"},
+        {"id": "vector", "name": "Vector DB", "x": 40, "y": 85, "color": "#FF3621"},
+        {"id": "historian", "name": "Historian", "x": 60, "y": 85, "color": "#00d4ff"},
+        {"id": "external", "name": "External APIs", "x": 80, "y": 85, "color": "#00ff88"},
+    ]
+
+    agent_elements = []
+
+    # Create SVG for animated lines
+    svg_lines = html.Div([
+        html.Div(
+            style={
+                "position": "absolute",
+                "top": "0",
+                "left": "0",
+                "width": "100%",
+                "height": "100%",
+                "pointerEvents": "none"
+            },
+            children=[
+                # Animated connection lines using CSS
+                html.Div(style={
+                    "position": "absolute",
+                    "top": "25%", "left": "50%",
+                    "width": "35%", "height": "2px",
+                    "background": "linear-gradient(90deg, transparent, #00d4ff, transparent)",
+                    "transform": "rotate(30deg)",
+                    "transformOrigin": "left center",
+                    "animation": "pulse 2s infinite"
+                }),
+            ]
+        )
+    ])
+
+    # Create agent nodes
+    for agent in agents:
+        agent_elements.append(
+            html.Div([
+                html.Div([
+                    html.I(className="fas fa-robot fa-2x", style={"color": agent["color"]}),
+                ], className="text-center mb-2 agent-node agent-active"),
+                html.Div(agent["name"], className="small text-center")
+            ], style={
+                "position": "absolute",
+                "left": f"{agent['x']}%",
+                "top": f"{agent['y']}%",
+                "transform": "translate(-50%, -50%)",
+                "zIndex": "10"
+            })
+        )
+
+    # Create MCP server nodes
+    for mcp in mcps:
+        agent_elements.append(
+            html.Div([
+                html.Div([
+                    html.I(className="fas fa-server fa-lg", style={"color": mcp["color"]}),
+                ], className="text-center mb-1"),
+                html.Div(mcp["name"], className="small text-center", style={"fontSize": "10px"})
+            ], style={
+                "position": "absolute",
+                "left": f"{mcp['x']}%",
+                "top": f"{mcp['y']}%",
+                "transform": "translate(-50%, -50%)",
+                "zIndex": "10"
+            })
+        )
+
+    # Add animated message bubbles
+    message_bubbles = [
+        {"from": "predictive", "to": "supervisor", "msg": "High failure probability detected", "delay": "0s"},
+        {"from": "supervisor", "to": "scheduling", "msg": "Create maintenance task", "delay": "1s"},
+        {"from": "scheduling", "to": "resource", "msg": "Find available worker", "delay": "2s"},
+        {"from": "resource", "to": "safety", "msg": "Verify certifications", "delay": "3s"},
+    ]
+
+    for i, bubble in enumerate(message_bubbles):
+        agent_elements.append(
+            html.Div([
+                html.Div(bubble["msg"], className="small px-2 py-1 rounded", style={
+                    "backgroundColor": "#00d4ff",
+                    "color": "#000",
+                    "fontSize": "10px",
+                    "whiteSpace": "nowrap"
+                })
+            ], className="message-bubble", style={
+                "position": "absolute",
+                "left": f"{30 + i * 15}%",
+                "top": "35%",
+                "animationDelay": bubble["delay"],
+                "zIndex": "20"
+            })
+        )
+
+    return html.Div([
+        html.Div(agent_elements, style={
+            "position": "relative",
+            "height": "350px",
+            "backgroundColor": "rgba(0,0,0,0.3)",
+            "borderRadius": "10px"
+        })
+    ])
+
+
+def create_message_log():
+    """Create simulated agent message log"""
+
+    messages = [
+        {"time": "14:32:15.123", "from": "Supervisor", "to": "All Agents", "type": "broadcast",
+         "msg": "Initiating schedule optimization cycle", "color": "#ff6b6b"},
+        {"time": "14:32:15.456", "from": "Predictive", "to": "Genie Spaces MCP", "type": "query",
+         "msg": "SELECT equipment_id, failure_prob FROM sensor_analysis WHERE failure_prob > 0.7", "color": "#00d4ff"},
+        {"time": "14:32:15.892", "from": "Genie Spaces MCP", "to": "Predictive", "type": "response",
+         "msg": "Returned 3 equipment records with high failure probability", "color": "#FF3621"},
+        {"time": "14:32:16.234", "from": "Predictive", "to": "Supervisor", "type": "alert",
+         "msg": "CRITICAL: Reactor Coolant Pump A - 85% failure probability", "color": "#00d4ff"},
+        {"time": "14:32:16.567", "from": "Supervisor", "to": "Vector MCP", "type": "query",
+         "msg": "Retrieve similar historical maintenance procedures", "color": "#ff6b6b"},
+        {"time": "14:32:17.123", "from": "Vector MCP", "to": "Supervisor", "type": "response",
+         "msg": "Found 5 similar procedures with 92% relevance score", "color": "#FF3621"},
+        {"time": "14:32:17.456", "from": "Supervisor", "to": "Scheduling", "type": "task",
+         "msg": "Create urgent maintenance task for RCP-A bearing replacement", "color": "#ff6b6b"},
+        {"time": "14:32:17.789", "from": "Scheduling", "to": "Resource", "type": "request",
+         "msg": "Find available senior technician with Pumps certification", "color": "#00d4ff"},
+        {"time": "14:32:18.123", "from": "Resource", "to": "Safety", "type": "check",
+         "msg": "Verify radiation exposure limits for W003 (Michael Rodriguez)", "color": "#00d4ff"},
+        {"time": "14:32:18.456", "from": "Safety", "to": "External API", "type": "query",
+         "msg": "Check NRC compliance requirements for RCP maintenance", "color": "#00d4ff"},
+        {"time": "14:32:18.892", "from": "External API", "to": "Safety", "type": "response",
+         "msg": "Work permit required, 2-person rule applies, max 4hr exposure", "color": "#00ff88"},
+        {"time": "14:32:19.234", "from": "Safety", "to": "Supervisor", "type": "approval",
+         "msg": "Schedule APPROVED with safety constraints applied", "color": "#00d4ff"},
+        {"time": "14:32:19.567", "from": "Supervisor", "to": "All Agents", "type": "complete",
+         "msg": "Schedule optimization complete - 8 tasks scheduled for next 7 days", "color": "#ff6b6b"},
+    ]
+
+    log_items = []
+    for msg in messages:
+        type_colors = {
+            "broadcast": "secondary",
+            "query": "info",
+            "response": "success",
+            "alert": "danger",
+            "task": "warning",
+            "request": "info",
+            "check": "primary",
+            "approval": "success",
+            "complete": "success"
+        }
+
+        log_items.append(
+            html.Div([
+                html.Div([
+                    html.Span(msg["time"], className="text-muted", style={"fontFamily": "monospace", "fontSize": "11px"}),
+                    dbc.Badge(msg["type"], color=type_colors.get(msg["type"], "secondary"), className="mx-2"),
+                    html.Span(msg["from"], style={"color": msg["color"], "fontWeight": "bold"}),
+                    html.I(className="fas fa-arrow-right mx-2", style={"color": "#666", "fontSize": "10px"}),
+                    html.Span(msg["to"], style={"color": "#888"}),
+                ], className="mb-1"),
+                html.Div(msg["msg"], className="small text-muted ps-4", style={"fontSize": "12px"})
+            ], className="mb-3 pb-2 border-bottom border-secondary")
+        )
+
+    return html.Div(log_items)
 
 
 # =============================================================================
@@ -1155,12 +1960,8 @@ def create_value_page():
     """Create value proposition and ROI page"""
 
     # Before/After comparison metrics
-    metrics_before = {"Unplanned Downtime": 120, "Maintenance Costs": 2.8, "Schedule Efficiency": 65, "Worker Utilization": 58}
-    metrics_after = {"Unplanned Downtime": 25, "Maintenance Costs": 1.9, "Schedule Efficiency": 94, "Worker Utilization": 87}
-
-    # Create comparison chart
     fig_comparison = go.Figure()
-    categories = list(metrics_before.keys())
+    categories = ["Unplanned Downtime", "Maintenance Costs", "Schedule Efficiency", "Worker Utilization"]
 
     fig_comparison.add_trace(go.Bar(
         name="Before AI Scheduling",
@@ -1398,12 +2199,64 @@ def display_page(pathname):
         return create_workforce_page()
     elif pathname == "/schedule":
         return create_schedule_page()
+    elif pathname == "/data-model":
+        return create_data_model_page()
     elif pathname == "/agents":
         return create_agents_page()
     elif pathname == "/value":
         return create_value_page()
     else:
         return create_dashboard()
+
+
+@callback(
+    Output("data-model-content", "children"),
+    [Input("btn-data-flow", "n_clicks"),
+     Input("btn-star-schema", "n_clicks"),
+     Input("btn-source-systems", "n_clicks")],
+    prevent_initial_call=True
+)
+def update_data_model_view(data_flow, star_schema, source_systems):
+    """Update data model view based on button clicks"""
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        return create_data_flow_view()
+
+    button_id = ctx.triggered[0]["prop_id"].split(".")[0]
+
+    if button_id == "btn-data-flow":
+        return create_data_flow_view()
+    elif button_id == "btn-star-schema":
+        return create_star_schema_view()
+    elif button_id == "btn-source-systems":
+        return create_data_flow_view()  # Same as data flow for now
+    else:
+        return create_data_flow_view()
+
+
+@callback(
+    Output("agent-view-content", "children"),
+    [Input("btn-agent-overview", "n_clicks"),
+     Input("btn-mcp-servers", "n_clicks"),
+     Input("btn-agent-comm", "n_clicks")],
+    prevent_initial_call=True
+)
+def update_agent_view(overview, mcp, comm):
+    """Update agent view based on button clicks"""
+    ctx = dash.callback_context
+    if not ctx.triggered:
+        return create_agent_overview()
+
+    button_id = ctx.triggered[0]["prop_id"].split(".")[0]
+
+    if button_id == "btn-agent-overview":
+        return create_agent_overview()
+    elif button_id == "btn-mcp-servers":
+        return create_mcp_servers_view()
+    elif button_id == "btn-agent-comm":
+        return create_agent_communication_view()
+    else:
+        return create_agent_overview()
 
 
 # =============================================================================
